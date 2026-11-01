@@ -1,0 +1,7 @@
+# Trusted Bash configuration, read by the root-owned service. Keep this file private.
+# Default state and pairings remain in /userdata/system/.config/sunshine.
+# SUNSHINE_DISPLAY=:0.0
+# Optional persistent compatibility libraries, ahead of the existing library path:
+# SUNSHINE_LIBRARY_PATH=/userdata/system/extra-libs
+# SUNSHINE_APPIMAGE=/userdata/system/bin/sunshine-service-current
+# SUNSHINE_LOGFILE=/userdata/system/logs/sunshine.log

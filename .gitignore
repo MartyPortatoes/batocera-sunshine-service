@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+*.AppImage
+*.log
+sunshine-service.conf

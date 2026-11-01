@@ -1,0 +1,83 @@
+#!/bin/bash
+# Based on n2qz/batocera-service-sunshine, CC0-1.0.
+set -u
+
+ROOT=${SUNSHINE_SERVICE_ROOT:-/userdata/system}
+CONFIG=${SUNSHINE_SERVICE_CONFIG:-$ROOT/configs/sunshine-service.conf}
+# shellcheck source=/dev/null
+[[ ! -f "$CONFIG" ]] || source "$CONFIG"
+APPIMAGE=${SUNSHINE_APPIMAGE:-$ROOT/bin/sunshine-service-current}
+PIDFILE=${SUNSHINE_PIDFILE:-/var/run/batocera-sunshine.pid}
+LOGFILE=${SUNSHINE_LOGFILE:-$ROOT/logs/sunshine.log}
+DISPLAY_VALUE=${SUNSHINE_DISPLAY:-:0.0}
+LIBRARY_PATH=${SUNSHINE_LIBRARY_PATH:-$ROOT/extra-libs}
+
+start_ticks() {
+    [[ -r "/proc/$1/stat" ]] || return 1
+    sed 's/.*) //' "/proc/$1/stat" | awk '{print $20}'
+}
+
+running() {
+    [[ -r "$PIDFILE" ]] || return 1
+    read -r pid saved_ticks < "$PIDFILE" || return 1
+    [[ "$pid" =~ ^[0-9]+$ && "$saved_ticks" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    [[ "$(start_ticks "$pid")" == "$saved_ticks" ]] || return 1
+    [[ "$(ps -o pgid= -p "$pid" | tr -d ' ')" == "$pid" ]]
+}
+
+start() {
+    if running; then echo "sunshine is already running (PID $pid)"; return 0; fi
+    if [[ ! -x "$APPIMAGE" ]]; then
+        echo "Sunshine is not installed: run sunshine-update VERSION --activate first" >&2
+        return 1
+    fi
+    mkdir -p "$(dirname "$LOGFILE")" || return 1
+    # A separate process group contains the AppImage runtime and its children.
+    setsid env HOME="$ROOT" DISPLAY="$DISPLAY_VALUE" \
+        LD_LIBRARY_PATH="$LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        "$APPIMAGE" system_tray=disabled >> "$LOGFILE" 2>&1 < /dev/null 9>&- &
+    pid=$!
+    for ((n=0; n<20; n++)); do
+        saved_ticks=$(start_ticks "$pid") || { sleep 0.1; continue; }
+        printf '%s %s\n' "$pid" "$saved_ticks" > "$PIDFILE"
+        if running; then
+            sleep 1
+            if running; then echo "sunshine started (PID $pid)"; return 0; fi
+            break
+        fi
+        sleep 0.1
+    done
+    rm -f "$PIDFILE"
+    echo "Sunshine failed to start; inspect $LOGFILE" >&2
+    return 1
+}
+
+stop() {
+    if running; then
+        kill -TERM -- "-$pid" || return 1
+        for ((n=0; n<100; n++)); do
+            running || break
+            sleep 0.1
+        done
+        if running; then echo "Sunshine did not stop cleanly" >&2; return 1; fi
+    fi
+    rm -f "$PIDFILE"
+    echo "sunshine stopped"
+}
+
+case "${1:-}" in
+    start|stop|restart|reload|status) ;;
+    *) echo "Usage: $0 {start|stop|restart|reload|status}" >&2; exit 2 ;;
+esac
+mkdir -p "$(dirname "$PIDFILE")" || exit 1
+exec 9> "$PIDFILE.lock"
+flock -x 9 || exit 1
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart|reload) stop && start ;;
+    status)
+        if running; then echo "sunshine is running (PID $pid)"; else echo "sunshine is stopped"; exit 1; fi
+        ;;
+esac

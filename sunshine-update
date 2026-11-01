@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Download verified official Sunshine releases. No network access at service boot."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+
+API = 'https://api.github.com/repos/LizardByte/Sunshine/releases'
+AGENT = 'batocera-sunshine-service/0.1.0'
+
+
+def request(url):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': AGENT}), timeout=60)
+
+
+def release_url(version):
+    if version == 'stable':
+        return API + '/latest'
+    if not re.fullmatch(r'v?\d+(?:\.\d+)+', version):
+        raise ValueError('Use stable or a numeric release version, for example 2026.914.233613')
+    return API + '/tags/' + urllib.parse.quote('v' + version.removeprefix('v'), safe='')
+
+
+def select_asset(release, architecture):
+    if architecture not in ('x86_64', 'amd64'):
+        raise ValueError('This service currently supports x86_64 only')
+    matches = [a for a in release.get('assets', [])
+               if re.fullmatch(r'(?:Sunshine_[0-9.]+_x86_64|sunshine)\.AppImage', a['name'])]
+    if len(matches) != 1:
+        raise ValueError('Expected exactly one official x86_64 AppImage asset')
+    asset = matches[0]
+    if not isinstance(asset.get('size'), int) or asset['size'] <= 0:
+        raise ValueError('Release has no valid asset size')
+    digest = asset.get('digest', '')
+    if not re.fullmatch(r'sha256:[0-9a-fA-F]{64}', digest):
+        raise ValueError('Release has no published SHA-256 digest; refusing unverified installation')
+    url = asset['browser_download_url']
+    if not url.startswith('https://github.com/LizardByte/Sunshine/releases/download/'):
+        raise ValueError('Unexpected download origin')
+    return asset
+
+
+def download_verified(asset, target_dir, opener=request):
+    expected = asset['digest'].split(':', 1)[1].lower()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / asset['name']
+    if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() == expected:
+        target.chmod(0o755)
+        return target
+    fd, temp_name = tempfile.mkstemp(prefix='.sunshine-download-', dir=target_dir)
+    staged = Path(temp_name)
+    try:
+        count = 0
+        digest = hashlib.sha256()
+        with os.fdopen(fd, 'wb') as out, opener(asset['browser_download_url']) as source:
+            while chunk := source.read(1024 * 1024):
+                out.write(chunk)
+                count += len(chunk)
+                digest.update(chunk)
+            out.flush()
+            os.fsync(out.fileno())
+        if count != asset['size'] or digest.hexdigest() != expected:
+            raise ValueError('Download size or SHA-256 mismatch; active version was not changed')
+        staged.chmod(0o755)
+        os.replace(staged, target)
+        return target
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def activate(target, link):
+    staged = link.with_name(link.name + '.staged')
+    staged.unlink(missing_ok=True)
+    staged.symlink_to(target.name)
+    os.replace(staged, link)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('version', nargs='?', default='stable')
+    parser.add_argument('--check', action='store_true', help='Show official release metadata without installing')
+    parser.add_argument('--activate', action='store_true', help='Select the verified download for the next service start')
+    parser.add_argument('--restart', action='store_true', help='Restart the installed service after activation')
+    args = parser.parse_args(argv)
+    if args.restart and not args.activate:
+        parser.error('--restart requires --activate')
+    with request(release_url(args.version)) as response:
+        release = json.load(response)
+    if args.version == 'stable' and (release.get('prerelease') or release.get('draft')):
+        raise ValueError('Stable lookup unexpectedly returned a draft or prerelease')
+    asset = select_asset(release, platform.machine())
+    print(f"{release['tag_name']}: {asset['name']} ({asset['digest']})")
+    if args.check:
+        return 0
+    root = Path(os.environ.get('SUNSHINE_SERVICE_ROOT', '/userdata/system'))
+    (root / 'bin').mkdir(parents=True, exist_ok=True)
+    with (root / 'bin/.sunshine-update.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        target = download_verified(asset, root / 'bin')
+        if args.activate:
+            activate(target, root / 'bin/sunshine-service-current')
+            print('Selected verified AppImage:', target.name)
+            if args.restart:
+                subprocess.run([str(root / 'services/sunshine'), 'restart'], check=True)
+        else:
+            print('Downloaded only. Select it with --activate; add --restart to restart Sunshine.')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f'sunshine-update: {error}', file=sys.stderr)
+        sys.exit(1)
