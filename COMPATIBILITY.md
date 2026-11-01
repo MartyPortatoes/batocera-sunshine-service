@@ -12,6 +12,6 @@ The existing persistent 64-bit `libwayland-client.so.0` workaround is retained. 
 - Web UI authentication endpoint reachable over LAN and Tailscale: passed before and after reboot (HTTP 401 without credentials).
 - Real service stop/start cycle: passed with one Sunshine instance and the existing configuration retained.
 - Automatic startup after an orderly Batocera reboot: passed, with one Sunshine instance and H.264/HEVC NVENC initialized.
-- Client video/audio/controllers and existing pairing usability: pending hands-on verification.
+- Existing paired Moonlight client: user reported that the requested video, audio, controller input, and game launch/exit checks looked good after reboot (2026-11-01).
 
-These checks establish server startup and reachability. They do not establish client streaming quality or controller mapping correctness.
+Server checks were observed directly; the Moonlight client result was reported by the user. These results cover this machine and client setup; they are not a performance benchmark or validation of every controller mapping.
