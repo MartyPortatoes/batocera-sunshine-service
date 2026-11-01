@@ -6,7 +6,11 @@ The existing persistent 64-bit `libwayland-client.so.0` workaround is retained. 
 
 ## Validation status
 
-- Updater integrity/failure tests and Linux service lifecycle tests: passed on the target Batocera version.
-- Real Sunshine deployment, encoder initialization, controller/streaming checks, and reboot persistence: pending.
+- Ten updater integrity/failure and Linux service lifecycle tests passed on the target Batocera version; ShellCheck 0.11.0 passed locally and GitHub Actions passed on Ubuntu.
+- Real Sunshine deployment: passed, using the existing persistent library workaround.
+- X11 capture and H.264/HEVC NVENC initialization: passed.
+- Authenticated Web UI reachable over LAN and Tailscale: passed (HTTP 401 without credentials).
+- Real service stop/start cycle: passed with one Sunshine instance and the existing configuration retained.
+- Client video/audio/controllers, existing pairing usability, and reboot persistence: pending hands-on verification.
 
-Update this record with observed results before the first public release.
+These checks establish server startup and reachability. They do not establish client streaming quality or controller mapping correctness.
